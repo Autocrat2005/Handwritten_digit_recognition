@@ -1,56 +1,71 @@
 import keras
-from keras.datasets import mnist
+from keras.datasets import mnist 
+from tensorflow.keras.utils import to_categorical
 from keras.models import Sequential
 from keras.layers import Dense, Dropout, Flatten
 from keras.layers import Conv2D, MaxPooling2D
 from keras import backend as K
+from tensorflow.keras import layers
+import tensorflow as tf 
 
-
+# =========================== Dataset Development ==============================
 (x_train, y_train), (x_test, y_test) = mnist.load_data()
+x_train_mod=x_train/255.0
+x_test_mod = x_test/255.0
 
-print(x_train.shape, y_train.shape)
+x_train_mod = x_train_mod.reshape(len(x_train_mod),28,28,1)
+x_test_mod = x_test_mod.reshape(len(x_test_mod),28,28,1)
 
-x_train = x_train.reshape(x_train.shape[0], 28, 28, 1)
-x_test = x_test.reshape(x_test.shape[0], 28, 28, 1)
-input_shape = (28, 28, 1)
+# ========================== Model development ================================= 
+
+def build_model(hp):
+    model = keras.Sequential([
+    keras.layers.Conv2D(
+        filters=hp.Int('conv_1', min_value=32, max_value=128, step=16),
+        kernel_size=hp.Choice('conv_1_kernel', values = [3,5]),
+        activation='relu',
+        input_shape=(28,28,1)), 
+
+    layers.Dropout(0.2),
+    keras.layers.Conv2D(
+        filters=hp.Int('conv_2', min_value=128, max_value=256, step=16),
+        kernel_size=hp.Choice('conv_2_kernel', values = [3,5]),
+        activation='relu'
+    ), 
+    layers.Dropout(0.2),
+    keras.layers.Flatten(),
+    keras.layers.Dense(
+        units=hp.Int('dense_1_units', min_value=256, max_value=512, step=16),
+        activation='relu'
+    ),
+    keras.layers.Dense(10, activation='softmax')
+    ])
+    model.compile(optimizer=tf.keras.optimizers.RMSprop(hp.Choice('learning_rate', values=[1e-2, 1e-3, 1e-4])),
+              loss='sparse_categorical_crossentropy',
+              metrics=['accuracy']) 
+    return model  
+
+import kerastuner as kt
+tuner = kt.Hyperband(build_model, 
+                     objective='val_accuracy',
+max_epochs=5,
+factor=3, 
+directory='dir', 
+project_name='khyperband')  
 
 
-y_train = keras.utils.to_categorical(y_train, 10)
-y_test = keras.utils.to_categorical(y_test, 10)
+stop_early = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5)
+tuner.search(x_train_mod, y_train, epochs=5, validation_split=0.2, callbacks=[stop_early]) 
 
-x_train = x_train.astype('float32')
-x_test = x_test.astype('float32')
-x_train /= 255
-x_test /= 255
-print('x_train shape:', x_train.shape)
-print(x_train.shape[0], 'train samples')
-print(x_test.shape[0], 'test samples')
+best_hp=tuner.get_best_hyperparameters()[0]
 
-batch_size = 128
-num_classes = 10
-epochs = 10
+h_model = tuner.hypermodel.build(best_hp)
+h_model.summary() 
+h_model.fit(x_train_mod, y_train, epochs=10) 
 
-model = Sequential()
-model.add(Conv2D(32, kernel_size=(5, 5),activation='relu',input_shape=input_shape))
-model.add(MaxPooling2D(pool_size=(2, 2)))
-model.add(Conv2D(64, (3, 3), activation='relu'))
-model.add(MaxPooling2D(pool_size=(2, 2)))
-model.add(Flatten())
-model.add(Dense(128, activation='relu'))
-model.add(Dropout(0.3))
-model.add(Dense(64, activation='relu'))
-model.add(Dropout(0.5))
-model.add(Dense(num_classes, activation='softmax'))
-
-model.compile(loss=keras.losses.categorical_crossentropy,optimizer=keras.optimizers.Adadelta(),metrics=['accuracy'])
-
-hist = model.fit(x_train, y_train,batch_size=batch_size,epochs=epochs,verbose=1,validation_data=(x_test, y_test))
-print("The model has successfully trained")
-
-score = model.evaluate(x_test, y_test, verbose=0)
+score = h_model.evaluate(x_test_mod, y_test, verbose=0)
 print('Test loss:', score[0])
 print('Test accuracy:', score[1])
 
-model.save('mnist.h5')
+h_model.save('mnist.h5')
 print("Saving the model as mnist.h5")
-
