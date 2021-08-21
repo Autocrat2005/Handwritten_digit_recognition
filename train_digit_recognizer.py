@@ -61,7 +61,26 @@ best_hp=tuner.get_best_hyperparameters()[0]
 
 h_model = tuner.hypermodel.build(best_hp)
 h_model.summary() 
-h_model.fit(x_train_mod, y_train, epochs=10) 
+history = h_model.fit(x_train_mod, y_train, epochs=10) 
+
+# ================================================== Evaluation ======================================= 
+
+import matplotlib.pyplot as plt
+acc = history.history['accuracy']
+val_acc = history.history['val_accuracy']
+loss = history.history['loss']
+val_loss = history.history['val_loss']
+
+epochs = range(len(acc))
+
+plt.plot(epochs, acc, 'r', label='Training accuracy')
+plt.plot(epochs, val_acc, 'b', label='Validation accuracy')
+plt.title('Training and validation accuracy')
+plt.legend(loc=0)
+plt.figure()
+
+
+plt.show()
 
 score = h_model.evaluate(x_test_mod, y_test, verbose=0)
 print('Test loss:', score[0])
