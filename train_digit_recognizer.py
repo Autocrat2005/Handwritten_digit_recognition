@@ -1,90 +1,55 @@
-import keras
-from keras.datasets import mnist 
-from tensorflow.keras.utils import to_categorical
-from keras.models import Sequential
-from keras.layers import Dense, Dropout, Flatten
-from keras.layers import Conv2D, MaxPooling2D
-from keras import backend as K
-from tensorflow.keras import layers
-import tensorflow as tf 
+import torch
+import torch.nn as nn
 
-# =========================== Dataset Development ==============================
-(x_train, y_train), (x_test, y_test) = mnist.load_data()
-x_train_mod=x_train/255.0
-x_test_mod = x_test/255.0
+class MyConvBlock(nn.Module):
+    def __init__(self, in_ch, out_ch, dropout_p):
+        kernel_size = 3
+        super().__init__()
 
-x_train_mod = x_train_mod.reshape(len(x_train_mod),28,28,1)
-x_test_mod = x_test_mod.reshape(len(x_test_mod),28,28,1)
+        self.model = nn.Sequential(
+            nn.Conv2d(in_ch, out_ch, kernel_size, stride=1, padding=1),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(),
+            nn.Dropout(dropout_p),
+            nn.MaxPool2d(2, stride=2)
+        )
 
-# ========================== Model development ================================= 
+    def forward(self, x):
+        return self.model(x)
 
-def build_model(hp):
-    model = keras.Sequential([
-    keras.layers.Conv2D(
-        filters=hp.Int('conv_1', min_value=32, max_value=128, step=16),
-        kernel_size=hp.Choice('conv_1_kernel', values = [3,5]),
-        activation='relu',
-        input_shape=(28,28,1)), 
-
-    layers.Dropout(0.2),
-    keras.layers.Conv2D(
-        filters=hp.Int('conv_2', min_value=128, max_value=256, step=16),
-        kernel_size=hp.Choice('conv_2_kernel', values = [3,5]),
-        activation='relu'
-    ), 
-    layers.Dropout(0.2),
-    keras.layers.Flatten(),
-    keras.layers.Dense(
-        units=hp.Int('dense_1_units', min_value=256, max_value=512, step=16),
-        activation='relu'
-    ),
-    keras.layers.Dense(10, activation='softmax')
-    ])
-    model.compile(optimizer=tf.keras.optimizers.RMSprop(hp.Choice('learning_rate', values=[1e-2, 1e-3, 1e-4])),
-              loss='sparse_categorical_crossentropy',
-              metrics=['accuracy']) 
-    return model  
-
-import kerastuner as kt
-tuner = kt.Hyperband(build_model, 
-                     objective='val_accuracy',
-max_epochs=5,
-factor=3, 
-directory='dir', 
-project_name='khyperband')  
+def get_batch_accuracy(output, y, N):
+    pred = output.argmax(dim=1, keepdim=True)
+    correct = pred.eq(y.view_as(pred)).sum().item()
+    return correct / N
 
 
-stop_early = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5)
-tuner.search(x_train_mod, y_train, epochs=5, validation_split=0.2, callbacks=[stop_early]) 
+def train(model, train_loader, train_N, random_trans, optimizer, loss_function):
+    loss = 0
+    accuracy = 0
 
-best_hp=tuner.get_best_hyperparameters()[0]
+    model.train()
+    for x, y in train_loader:
+        output = model(random_trans(x))
+        optimizer.zero_grad()
+        batch_loss = loss_function(output, y)
+        batch_loss.backward()
+        optimizer.step()
 
-h_model = tuner.hypermodel.build(best_hp)
-h_model.summary() 
-history = h_model.fit(x_train_mod, y_train, epochs=10) 
+        loss += batch_loss.item()
+        accuracy += get_batch_accuracy(output, y, train_N)
+    print('Train - Loss: {:.4f} Accuracy: {:.4f}'.format(loss, accuracy))
 
-# ================================================== Evaluation ======================================= 
+def validate(model, valid_loader, valid_N, loss_function):
+    loss = 0
+    accuracy = 0
 
-import matplotlib.pyplot as plt
-acc = history.history['accuracy']
-val_acc = history.history['val_accuracy']
-loss = history.history['loss']
-val_loss = history.history['val_loss']
+    model.eval()
+    with torch.no_grad():
+        for x, y in valid_loader:
+            output = model(x)
 
-epochs = range(len(acc))
-
-plt.plot(epochs, acc, 'r', label='Training accuracy')
-plt.plot(epochs, val_acc, 'b', label='Validation accuracy')
-plt.title('Training and validation accuracy')
-plt.legend(loc=0)
-plt.figure()
-
-
-plt.show()
-
-score = h_model.evaluate(x_test_mod, y_test, verbose=0)
-print('Test loss:', score[0])
-print('Test accuracy:', score[1])
-
-h_model.save('mnist.h5')
+            loss += loss_function(output, y).item()
+            accuracy += get_batch_accuracy(output, y, valid_N)
+    print('Valid - Loss: {:.4f} Accuracy: {:.4f}'.format(loss, accuracy))
+model.save('mnist.h5')
 print("Saving the model as mnist.h5")
